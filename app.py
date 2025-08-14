@@ -82,40 +82,25 @@ def is_classifier(model) -> bool:
         return hasattr(model, "predict_proba")
 
 # ============================
-# Sidebar – Model loading & options
+# Sidebar – Model length selection & options
 # ============================
 st.sidebar.header("⚙️ Settings")
 
-# Model loading
+# Instead of uploading/choosing a model, just load the model from best1_model.pkl and infer n_features from it
 model = None
 model_status = ""
 
 default_model_path = Path("best1_model.pkl")
 if default_model_path.exists():
     try:
-        model = load_model_from_path(default_model_path)
-        if model is not None:
-            model_status = f"Model loaded from **{default_model_path.name}**"
-        else:
-            model_status = "Failed to load default model."
+        model = joblib.load(default_model_path)
+        if not hasattr(model, "predict"):
+            raise ValueError(f"Loaded object from {default_model_path} is of type {type(model)} and does not have a 'predict' method.")
+        model_status = f"Model loaded from **{default_model_path.name}**"
     except Exception as e:
         model_status = f"❌ Failed to load default model: {e}"
 else:
-    model_status = "No default model file found. Please upload a model file."
-
-uploaded_model = st.sidebar.file_uploader(
-    "Upload model file (.pkl)", type=["pkl", "joblib"], key="model_uploader",
-    help="Preferably a Pipeline or Estimator saved with joblib"
-)
-if uploaded_model is not None:
-    try:
-        model = joblib.load(uploaded_model)
-        if not hasattr(model, "predict"):
-            raise ValueError(f"Uploaded file contains object of type {type(model)} without a 'predict' method.")
-        model_status = f"Model loaded from uploaded file: **{uploaded_model.name}**"
-    except Exception as e:
-        model = None
-        model_status = f"❌ Failed to load uploaded model: {e}"
+    model_status = "No default model file found. Please ensure best1_model.pkl is present."
 
 st.sidebar.markdown(f"**Model status:** {model_status}")
 
@@ -129,6 +114,7 @@ results_file = st.sidebar.file_uploader(
 st.sidebar.divider()
 st.sidebar.subheader("🧮 Input settings")
 
+# Only allow user to choose the length (number of features) of the model
 inferred_n_features = None
 if model is not None:
     for attr in ["n_features_in_", "n_features_"]:
@@ -142,7 +128,7 @@ n_features = st.sidebar.number_input(
     help="The system can try to infer the number, or you can set it manually"
 )
 
-# Sample data to infer features
+# Sample data to infer features (optional, keep for UI completeness)
 st.sidebar.markdown("**Infer feature inputs from data**")
 sample_data_file = st.sidebar.file_uploader(
     "Sample data (CSV)", type=["csv"], key="sample_data_uploader",
@@ -275,7 +261,7 @@ with tab_predict:
     st.markdown("### 🔮 Predict using the model")
 
     if model is None:
-        st.warning("No model loaded yet. Upload a .pkl file from the sidebar or place best_model.pkl in the folder.")
+        st.warning("No model loaded yet. Please ensure best1_model.pkl is present in the folder.")
     else:
         if not hasattr(model, "predict"):
             st.error(f"Loaded model is of type {type(model)} and does not have a 'predict' method. Ensure the .pkl file contains a valid scikit-learn model.")
@@ -342,4 +328,3 @@ with tab_predict:
 # ============================
 st.divider()
 st.markdown("Finished")
-
