@@ -101,7 +101,7 @@ if default_model_path.exists():
     except Exception as e:
         model_status = f"❌ Failed to load default model: {e}"
 else:
-    model_status = f"Default model file **{default_model_path.name}** not found."
+    model_status = "No default model file found. Please upload a model file."
 
 uploaded_model = st.sidebar.file_uploader(
     "Upload model file (.pkl)", type=["pkl", "joblib"], key="model_uploader",
@@ -342,3 +342,4 @@ with tab_predict:
 # ============================
 st.divider()
 st.markdown("Finished")
+
