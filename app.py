@@ -60,17 +60,15 @@ def load_model_from_bytes(file_bytes: bytes):
     except ModuleNotFoundError as e:
         missing_module = str(e).split("'")[1]
         st.error(
-            f"Failed to load model: Missing required Python module: <b>{missing_module}</b>.<br>"
-            f"Please install it in your environment (e.g., <code>pip install {missing_module}</code>) and reload the app.",
-            unsafe_allow_html=True,
+            f"Failed to load model: Missing required Python module: {missing_module}.\n"
+            f"Please install it in your environment (e.g., pip install {missing_module}) and reload the app."
         )
         return None
     except AttributeError as e:
         st.error(
-            f"Failed to load model: {e}.<br>"
-            "This may be due to version mismatch between the environment where the model was saved and the current environment.<br>"
-            "Try to use the same library versions as used during model training.",
-            unsafe_allow_html=True,
+            f"Failed to load model: {e}.\n"
+            "This may be due to version mismatch between the environment where the model was saved and the current environment.\n"
+            "Try to use the same library versions as used during model training."
         )
         return None
     except Exception as e:
