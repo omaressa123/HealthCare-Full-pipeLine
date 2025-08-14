@@ -4,6 +4,8 @@ import numpy as np
 import joblib
 import io
 from pathlib import Path
+import sys
+import importlib
 
 # ============================
 # Page / Theming
@@ -49,11 +51,28 @@ st.markdown(
 # ============================
 @st.cache_resource(show_spinner=False)
 def load_model_from_bytes(file_bytes: bytes):
+    # Try to load the model, and if it fails due to missing module, prompt user to install it
     try:
         model = joblib.load(io.BytesIO(file_bytes))
         if not hasattr(model, "predict"):
             raise ValueError(f"Loaded object is of type {type(model)} and does not have a 'predict' method.")
         return model
+    except ModuleNotFoundError as e:
+        missing_module = str(e).split("'")[1]
+        st.error(
+            f"Failed to load model: Missing required Python module: <b>{missing_module}</b>.<br>"
+            f"Please install it in your environment (e.g., <code>pip install {missing_module}</code>) and reload the app.",
+            unsafe_allow_html=True,
+        )
+        return None
+    except AttributeError as e:
+        st.error(
+            f"Failed to load model: {e}.<br>"
+            "This may be due to version mismatch between the environment where the model was saved and the current environment.<br>"
+            "Try to use the same library versions as used during model training.",
+            unsafe_allow_html=True,
+        )
+        return None
     except Exception as e:
         st.error(f"Failed to load model: {e}")
         return None
@@ -80,17 +99,21 @@ model_file = st.sidebar.file_uploader(
 model = None
 model_status = ""
 inferred_n_features = None
+model_load_error = None
 
 if model_file is not None:
-    model = load_model_from_bytes(model_file.getvalue())
-    if model is not None:
-        model_status = f"Model loaded from **{model_file.name}**<br>Type: <code>{type(model).__name__}</code>"
-        for attr in ["n_features_in_", "n_features_"]:
-            if hasattr(model, attr):
-                inferred_n_features = int(getattr(model, attr))
-                break
-    else:
-        model_status = f"❌ Failed to load model from {model_file.name}"
+    try:
+        model = load_model_from_bytes(model_file.getvalue())
+        if model is not None:
+            model_status = f"✅ Model loaded from **{model_file.name}**<br>Type: <code>{type(model).__name__}</code>"
+            for attr in ["n_features_in_", "n_features_"]:
+                if hasattr(model, attr):
+                    inferred_n_features = int(getattr(model, attr))
+                    break
+        else:
+            model_status = f"❌ Failed to load model from {model_file.name}. See error message above."
+    except Exception as e:
+        model_status = f"❌ Failed to load model from {model_file.name}: {e}"
 else:
     model_status = "No model uploaded. Please upload a .pkl or .joblib file."
 
