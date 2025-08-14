@@ -253,11 +253,5 @@ with tab_predict:
 # Footer / Tips
 # ============================
 st.divider()
-st.markdown(
-    """
-    **Tips:**
-    - Save your model as a `Pipeline` including any preprocessing (Scaling/Encoding) to avoid input shape mismatches.
-    - To create `requirements.txt`: run `pip freeze > requirements.txt` in your project environment.
-    - Deploy the app via **Streamlit Community Cloud** or **Hugging Face Spaces** by linking your GitHub repository.
-    """
-)
+st.markdown("Finished")
+
