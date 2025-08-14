@@ -90,7 +90,7 @@ st.sidebar.header("⚙️ Settings")
 model = None
 model_status = ""
 
-default_model_path = Path("best1_model.pkl")
+default_model_path = Path("best2_model.pkl")
 if default_model_path.exists():
     try:
         model = joblib.load(default_model_path)
@@ -328,3 +328,4 @@ with tab_predict:
 # ============================
 st.divider()
 st.markdown("Finished")
+
