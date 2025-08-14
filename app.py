@@ -49,7 +49,45 @@ st.markdown(
 # ============================
 @st.cache_resource(show_spinner=False)
 def load_model_from_path(path: Path):
-    return joblib.load(path)
+    try:
+        model = joblib.load(path)
+        if not hasattr(model, "predict"):
+            raise ValueError(f"Loaded object from {path} is of type {type(model)} and does not have a 'predict' method.")
+        return model
+    except Exception as e:
+        st.error(f"Failed to load model from {path}: {e}")
+        return None
+
+# Sidebar model loading
+st.sidebar.header("⚙️ Settings")
+model = None
+model_status = ""
+
+default_model_path = Path("best1_model.pkl")
+if default_model_path.exists():
+    try:
+        model = load_model_from_path(default_model_path)
+        if model is not None:
+            model_status = f"Model loaded from **{default_model_path.name}**"
+        else:
+            model_status = "Failed to load default model."
+    except Exception as e:
+        model_status = f"❌ Failed to load default model: {e}"
+else:
+    model_status = f"Default model file **{default_model_path.name}** not found."
+
+uploaded_model = st.sidebar.file_uploader("Upload model file (.pkl)", type=["pkl", "joblib"], help="Preferably a Pipeline or Estimator saved with joblib")
+if uploaded_model is not None:
+    try:
+        model = joblib.load(uploaded_model)
+        if not hasattr(model, "predict"):
+            raise ValueError(f"Uploaded file contains object of type {type(model)} without a 'predict' method.")
+        model_status = f"Model loaded from uploaded file: **{uploaded_model.name}**"
+    except Exception as e:
+        model = None
+        model_status = f"❌ Failed to load uploaded model: {e}"
+
+st.sidebar.markdown(f"**Model status:** {model_status}")
 
 @st.cache_data(show_spinner=False)
 def read_results_csv(file_bytes: bytes) -> pd.DataFrame:
@@ -314,4 +352,5 @@ with tab_predict:
 # ============================
 st.divider()
 st.markdown("Finished")
+
 
