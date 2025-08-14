@@ -54,8 +54,40 @@ def load_model_from_bytes(file_bytes: bytes):
     # Try to load the model, and if it fails due to missing module, prompt user to install it
     try:
         model = joblib.load(io.BytesIO(file_bytes))
+        # If the loaded object is a dict, try to extract a model from common keys
+        if isinstance(model, dict):
+            # Try common keys for model storage
+            possible_keys = ["model", "estimator", "clf", "regressor", "pipeline"]
+            found = False
+            for key in possible_keys:
+                if key in model and hasattr(model[key], "predict"):
+                    model = model[key]
+                    found = True
+                    break
+            # If not found, try to find the first value in the dict that has a predict method
+            if not found:
+                for k, v in model.items():
+                    if hasattr(v, "predict"):
+                        model = v
+                        found = True
+                        break
+            if not found:
+                # Instead of erroring, try to show the user the available keys and types
+                keys_types = {k: type(v).__name__ for k, v in model.items()}
+                st.error(
+                    f"Failed to load model: The uploaded file contains a dictionary, not a model object.<br>"
+                    f"Available keys in the dictionary: <code>{list(model.keys())}</code><br>"
+                    f"Types of values: <code>{keys_types}</code><br>"
+                    "Please upload a file containing a trained scikit-learn or XGBoost model, "
+                    "or a dictionary with a key like 'model' or 'estimator' containing the model object with a <code>predict</code> method."
+                )
+                return None
         if not hasattr(model, "predict"):
-            raise ValueError(f"Loaded object is of type {type(model)} and does not have a 'predict' method.")
+            st.error(
+                f"Failed to load model: The loaded object is of type <code>{type(model).__name__}</code> and does not have a <code>predict</code> method.<br>"
+                "Please upload a file containing a trained scikit-learn or XGBoost model."
+            )
+            return None
         return model
     except ModuleNotFoundError as e:
         missing_module = str(e).split("'")[1]
@@ -240,6 +272,23 @@ else:
                     if ui_mode == "sample_df":
                         row_dict = {name: value for name, value in inputs}
                         X = pd.DataFrame([row_dict])
+
+                        # --- Fix for feature_names mismatch ---
+                        # If model expects more columns than provided, add missing columns with default value (e.g., 0 or np.nan)
+                        if hasattr(model, "feature_names_in_"):
+                            expected_features = list(model.feature_names_in_)
+                        elif hasattr(model, "get_booster") and hasattr(model.get_booster(), "feature_names"):
+                            # XGBoost sklearn API
+                            expected_features = list(model.get_booster().feature_names)
+                        else:
+                            expected_features = list(X.columns)
+
+                        missing_features = [f for f in expected_features if f not in X.columns]
+                        if missing_features:
+                            for f in missing_features:
+                                X[f] = 0  # or np.nan, or a default value
+                        # Reorder columns to match model expectation
+                        X = X[expected_features]
                     else:
                         X = np.array(inputs, dtype=float).reshape(1, -1)
 
@@ -258,7 +307,26 @@ else:
                         except Exception:
                             pass
                 except Exception as e:
-                    st.error(f"An error occurred during prediction: {e}")
+                    # Try to give a more helpful error if it's a feature_names mismatch
+                    import re
+                    msg = str(e)
+                    if "feature_names mismatch" in msg:
+                        # Try to extract expected and provided features from the error message
+                        match = re.search(r"feature_names mismatch: \[(.*?)\] \[(.*?)\] expected", msg)
+                        if match:
+                            expected = match.group(1)
+                            provided = match.group(2)
+                            st.error(
+                                f"Feature names mismatch between model and input.<br>"
+                                f"**Model expects:** <code>[{expected}]</code><br>"
+                                f"**You provided:** <code>[{provided}]</code><br>"
+                                f"Please ensure your input columns match the model's expected features, including any ID columns if required.",
+                                unsafe_allow_html=True
+                            )
+                        else:
+                            st.error(f"Feature names mismatch: {msg}")
+                    else:
+                        st.error(f"An error occurred during prediction: {e}")
 
 # ============================
 # Footer / Tips
