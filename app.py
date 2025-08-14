@@ -215,10 +215,8 @@ with tab_compare:
     # Optional manual input as textarea (CSV-like)
     with st.expander("Or enter results manually (text)"):
         sample_text = """model,metric
-Logistic Regression,0.87
-Random Forest,0.92
-XGBoost,0.95
-SVM,0.89
+Random Forest,0.97
+XGBoost,0.98
 KNN,0.85
 """
         txt = st.text_area("Paste results here (CSV)", sample_text, height=160)
@@ -362,3 +360,4 @@ with tab_predict:
 # ============================
 st.divider()
 st.markdown("Finished")
+
