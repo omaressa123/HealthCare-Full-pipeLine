@@ -133,6 +133,54 @@ n_features = st.sidebar.number_input(
     help="The system can try to infer the number, or you can set it manually"
 )
 
+# Optional: sample data to infer features
+st.sidebar.markdown("**Infer feature inputs from data**")
+sample_data_file = st.sidebar.file_uploader(
+    "Sample data (CSV)", type=["csv"], key="sample_csv",
+    help="Upload a small CSV with your input columns to auto-generate inputs"
+)
+use_bundled = False
+if sample_data_file is None and Path("Healthcare-Diabetes.csv").exists():
+    use_bundled = st.sidebar.checkbox("Use bundled Healthcare-Diabetes.csv", value=False)
+
+sample_df = None
+if sample_data_file is not None:
+    try:
+        sample_df = pd.read_csv(sample_data_file)
+    except Exception as e:
+        st.sidebar.error(f"Failed to read CSV: {e}")
+elif use_bundled:
+    try:
+        sample_df = pd.read_csv("Healthcare-Diabetes.csv")
+    except Exception as e:
+        st.sidebar.error(f"Failed to read bundled CSV: {e}")
+
+target_column = None
+feature_columns = None
+if sample_df is not None:
+    all_cols = list(sample_df.columns)
+    guess_targets = [c for c in all_cols if c.lower() in ["target", "label", "outcome", "y"]]
+    target_opts = ["<none>"] + all_cols
+    target_idx = 0
+    if guess_targets:
+        try:
+            target_idx = 1 + all_cols.index(guess_targets[0])
+        except Exception:
+            target_idx = 0
+    target_column = st.sidebar.selectbox("Target column (exclude)", options=target_opts, index=target_idx)
+
+    excluded_cols = set()
+    if target_column and target_column != "<none>":
+        excluded_cols.add(target_column)
+
+    id_like = [c for c in all_cols if c.lower() == "id" or c.lower().endswith("id")]
+    default_id_like = [c for c in id_like[:1]]
+    if id_like:
+        excluded_ids = st.sidebar.multiselect("Exclude ID-like columns", id_like, default=default_id_like)
+        excluded_cols.update(excluded_ids)
+
+    feature_columns = [c for c in all_cols if c not in excluded_cols]
+
 show_prob = st.sidebar.checkbox("Show prediction probabilities (for Classification)", value=True)
 
 # ============================
@@ -225,15 +273,75 @@ with tab_predict:
         with st.form("predict_form"):
             cols = st.columns(4)
             inputs = []
-            for i in range(int(n_features)):
-                with cols[i % 4]:
-                    val = st.number_input(f"Feature {i+1}", value=0.0, key=f"f_{i}")
-                    inputs.append(val)
-            submitted = st.form_submit_button("Predict")
+            inputs_map = None
+            ui_mode = "count"  # one of: sample_df, feature_names, count
+
+            # Prefer: infer from sample data
+            if 'feature_columns' in globals() and feature_columns is not None and 'sample_df' in globals() and sample_df is not None:
+                ui_mode = "sample_df"
+                for idx, col_name in enumerate(feature_columns):
+                    series = sample_df[col_name]
+                    with cols[idx % 4]:
+                        # Numeric columns
+                        if pd.api.types.is_bool_dtype(series):
+                            default_val = bool(series.mode(dropna=True).iloc[0]) if not series.dropna().empty else False
+                            val = st.checkbox(f"{col_name}", value=default_val, key=f"col_{col_name}")
+                        elif pd.api.types.is_numeric_dtype(series):
+                            # Use median as default to be robust to outliers
+                            median_val = series.median()
+                            try:
+                                default_val = float(median_val)
+                            except Exception:
+                                default_val = 0.0
+                            val = st.number_input(f"{col_name}", value=default_val, key=f"col_{col_name}")
+                        else:
+                            uniques = series.dropna().unique()
+                            # For manageable cardinality, use a selectbox; otherwise, text input
+                            if 0 < len(uniques) <= 50:
+                                options = [str(u) for u in sorted(uniques, key=lambda x: str(x))]
+                                val = st.selectbox(f"{col_name}", options=options, key=f"col_{col_name}")
+                            else:
+                                default_text = str(series.dropna().iloc[0]) if not series.dropna().empty else ""
+                                val = st.text_input(f"{col_name}", value=default_text, key=f"col_{col_name}")
+                        inputs.append((col_name, val))
+                submitted = st.form_submit_button("Predict")
+            else:
+                # Next preference: model-declared feature names
+                feature_names = None
+                if hasattr(model, "feature_names_in_"):
+                    try:
+                        feature_names = list(getattr(model, "feature_names_in_"))
+                    except Exception:
+                        feature_names = None
+
+                if feature_names:
+                    ui_mode = "feature_names"
+                    inputs_map = {}
+                    for i, name in enumerate(feature_names):
+                        with cols[i % 4]:
+                            val = st.number_input(f"{name}", value=0.0, key=f"f_{i}")
+                            inputs_map[name] = val
+                    submitted = st.form_submit_button("Predict")
+                else:
+                    # Fallback: simple count-based inputs
+                    ui_mode = "count"
+                    for i in range(int(n_features)):
+                        with cols[i % 4]:
+                            val = st.number_input(f"Feature {i+1}", value=0.0, key=f"f_{i}")
+                            inputs.append(val)
+                    submitted = st.form_submit_button("Predict")
 
         if submitted:
-            X = np.array(inputs, dtype=float).reshape(1, -1)
             try:
+                # Build input data according to UI mode
+                if ui_mode == "sample_df":
+                    row_dict = {name: value for name, value in inputs}
+                    X = pd.DataFrame([row_dict])
+                elif ui_mode == "feature_names" and inputs_map is not None:
+                    X = pd.DataFrame([inputs_map])
+                else:
+                    X = np.array(inputs, dtype=float).reshape(1, -1)
+
                 y_pred = model.predict(X)
                 st.success(f"Output: {y_pred[0]}")
 
@@ -254,4 +362,3 @@ with tab_predict:
 # ============================
 st.divider()
 st.markdown("Finished")
-
