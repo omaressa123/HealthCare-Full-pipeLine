@@ -48,33 +48,18 @@ st.markdown(
 # Helpers
 # ============================
 @st.cache_resource(show_spinner=False)
-def load_model_from_path(path: Path):
+def load_model_from_bytes(file_bytes: bytes):
     try:
-        model = joblib.load(path)
+        model = joblib.load(io.BytesIO(file_bytes))
         if not hasattr(model, "predict"):
-            raise ValueError(f"Loaded object from {path} is of type {type(model)} and does not have a 'predict' method.")
+            raise ValueError(f"Loaded object is of type {type(model)} and does not have a 'predict' method.")
         return model
     except Exception as e:
-        st.error(f"Failed to load model from {path}: {e}")
+        st.error(f"Failed to load model: {e}")
         return None
 
-@st.cache_data(show_spinner=False)
-def read_results_csv(file_bytes: bytes) -> pd.DataFrame:
-    df = pd.read_csv(io.BytesIO(file_bytes))
-    df.columns = [c.strip().lower() for c in df.columns]
-    if "metric" not in df.columns:
-        for alt in ["accuracy", "f1", "score", "auc"]:
-            if alt in df.columns:
-                df = df.rename(columns={alt: "metric"})
-                break
-    if "model" not in df.columns:
-        for alt in ["name", "classifier", "estimator"]:
-            if alt in df.columns:
-                df = df.rename(columns={alt: "model"})
-                break
-    return df
-
 def is_classifier(model) -> bool:
+    # For XGBoost and sklearn models
     try:
         from sklearn.base import is_classifier as sk_is_classifier
         return sk_is_classifier(model)
@@ -82,45 +67,38 @@ def is_classifier(model) -> bool:
         return hasattr(model, "predict_proba")
 
 # ============================
-# Sidebar – Model length selection & options
+# Sidebar – Model upload & options
 # ============================
 st.sidebar.header("⚙️ Settings")
 
-# Instead of uploading/choosing a model, just load the model from best1_model.pkl and infer n_features from it
+# Upload model file (for your use: joblib.dump(models, 'best2_model.pkl'))
+model_file = st.sidebar.file_uploader(
+    "Upload your model (.pkl)", type=["pkl", "joblib"], key="model_uploader",
+    help="Upload a scikit-learn or XGBoost model file (joblib or pickle format)"
+)
+
 model = None
 model_status = ""
+inferred_n_features = None
 
-default_model_path = Path("best2_model.pkl")
-if default_model_path.exists():
-    try:
-        model = joblib.load(default_model_path)
-        if not hasattr(model, "predict"):
-            raise ValueError(f"Loaded object from {default_model_path} is of type {type(model)} and does not have a 'predict' method.")
-        model_status = f"Model loaded from **{default_model_path.name}**"
-    except Exception as e:
-        model_status = f"❌ Failed to load default model: {e}"
+if model_file is not None:
+    model = load_model_from_bytes(model_file.getvalue())
+    if model is not None:
+        model_status = f"Model loaded from **{model_file.name}**<br>Type: <code>{type(model).__name__}</code>"
+        for attr in ["n_features_in_", "n_features_"]:
+            if hasattr(model, attr):
+                inferred_n_features = int(getattr(model, attr))
+                break
+    else:
+        model_status = f"❌ Failed to load model from {model_file.name}"
 else:
-    model_status = "No default model file found. Please ensure best1_model.pkl is present."
+    model_status = "No model uploaded. Please upload a .pkl or .joblib file."
 
-st.sidebar.markdown(f"**Model status:** {model_status}")
-
-# Model comparison results
-results_file = st.sidebar.file_uploader(
-    "Model comparison results (CSV)", type=["csv"], key="results_uploader",
-    help="Add a file with a 'model' column and a 'metric' column (or accuracy/f1/score)"
-)
+st.sidebar.markdown(f"**Model status:** {model_status}", unsafe_allow_html=True)
 
 # Configure feature inputs
 st.sidebar.divider()
 st.sidebar.subheader("🧮 Input settings")
-
-# Only allow user to choose the length (number of features) of the model
-inferred_n_features = None
-if model is not None:
-    for attr in ["n_features_in_", "n_features_"]:
-        if hasattr(model, attr):
-            inferred_n_features = int(getattr(model, attr))
-            break
 
 n_features = st.sidebar.number_input(
     "Number of features", min_value=1, max_value=200,
@@ -189,143 +167,80 @@ show_prob = st.sidebar.checkbox(
 # ============================
 st.markdown("""
 # 🤖 <span class="accent">ML Model Deployment</span>
-A simple **Streamlit** interface to compare models, select the best model, and try predictions with your own inputs.
+A simple **Streamlit** interface to upload your model and try predictions with your own inputs.
 """, unsafe_allow_html=True)
 
-# Tabs: Compare | Predict
-tab_compare, tab_predict = st.tabs(["📊 Model Comparison", "🔮 Prediction"])
-
 # ============================
-# Tab 1: Model Comparison
+# Prediction Section
 # ============================
-with tab_compare:
-    st.markdown("### 📊 Model Performance Comparison")
-    help_txt = (
-        "You can upload a CSV file from the sidebar containing a 'model' column and a 'metric' column\n"
-        "Example: LogisticRegression,0.89\nRandomForest,0.93\nXGBoost,0.95"
-    )
-    st.markdown(f"<p class='small'>{help_txt}</p>", unsafe_allow_html=True)
+st.markdown("### 🔮 Predict using the model")
 
-    df_results = None
-    if results_file is not None:
-        try:
-            df_results = read_results_csv(results_file.getvalue())
-        except Exception as e:
-            st.error(f"Failed to read file: {e}")
-
-    with st.expander("Or enter results manually (text)"):
-        sample_text = """model,metric
-Logistic Regression,0.87
-Random Forest,0.92
-XGBoost,0.95
-SVM,0.89
-KNN,0.85
-"""
-        txt = st.text_area("Paste results here (CSV)", sample_text, height=160, key="manual_results_textarea")
-        if st.button("Use this text", key="use_text_button"):
-            try:
-                df_results = pd.read_csv(io.StringIO(txt))
-            except Exception as e:
-                st.error(f"Failed to read text as CSV: {e}")
-
-    if df_results is not None and {"model", "metric"}.issubset({c.lower() for c in df_results.columns}):
-        cols_lower = [c.lower() for c in df_results.columns]
-        df_results.columns = cols_lower
-        if "model" not in df_results.columns or "metric" not in df_results.columns:
-            st.error("The file must contain 'model' and 'metric' columns")
-        else:
-            df_plot = df_results.copy()
-            df_plot = df_plot.dropna(subset=["model", "metric"]).copy()
-            df_plot["metric"] = pd.to_numeric(df_plot["metric"], errors="coerce")
-            df_plot = df_plot.dropna(subset=["metric"]).copy()
-            df_plot = df_plot.sort_values("metric", ascending=False)
-
-            st.dataframe(df_plot.reset_index(drop=True), use_container_width=True)
-
-            chart_df = df_plot.set_index("model")["metric"]
-            st.bar_chart(chart_df)
-
-            if not df_plot.empty:
-                best_row = df_plot.iloc[0]
-                st.markdown(
-                    f"**Best model:** <span class='metric-pill'>{best_row['model']}</span> — value: **{best_row['metric']:.4f}**",
-                    unsafe_allow_html=True,
-                )
+if model is None:
+    st.warning("No model loaded yet. Please upload a .pkl or .joblib model file in the sidebar.")
+else:
+    if not hasattr(model, "predict"):
+        st.error(f"Loaded model is of type {type(model)} and does not have a 'predict' method. Ensure the .pkl file contains a valid scikit-learn or XGBoost model.")
     else:
-        st.info("Upload the results file or enter them manually to display the comparison.")
+        problem_type = "Classification" if is_classifier(model) else "Regression"
+        st.markdown(f"**Detected problem type:** {problem_type}")
 
-# ============================
-# Tab 2: Prediction
-# ============================
-with tab_predict:
-    st.markdown("### 🔮 Predict using the model")
+        with st.form("predict_form"):
+            inputs = []
+            ui_mode = "count"
 
-    if model is None:
-        st.warning("No model loaded yet. Please ensure best1_model.pkl is present in the folder.")
-    else:
-        if not hasattr(model, "predict"):
-            st.error(f"Loaded model is of type {type(model)} and does not have a 'predict' method. Ensure the .pkl file contains a valid scikit-learn model.")
-        else:
-            problem_type = "Classification" if is_classifier(model) else "Regression"
-            st.markdown(f"**Detected problem type:** {problem_type}")
-
-            with st.form("predict_form"):
-                inputs = []
-                inputs_map = None
-                ui_mode = "count"
-
-                if sample_df is not None and feature_columns:
-                    ui_mode = "sample_df"
-                    st.markdown("**Input features**")
-                    cols = st.columns(4)
-                    for i, col_name in enumerate(feature_columns[:n_features]):
-                        with cols[i % 4]:
-                            if pd.api.types.is_numeric_dtype(sample_df[col_name]):
-                                value = st.number_input(
-                                    col_name, value=0.0, step=0.1, format="%.4f", key=f"input_{col_name}"
-                                )
-                            else:
-                                value = st.text_input(col_name, value="", key=f"input_{col_name}")
-                            inputs.append((col_name, value))
-                else:
-                    ui_mode = "count"
-                    st.markdown("**Input features (generic)**")
-                    cols = st.columns(4)
-                    for i in range(n_features):
-                        with cols[i % 4]:
+            if sample_df is not None and feature_columns:
+                ui_mode = "sample_df"
+                st.markdown("**Input features**")
+                cols = st.columns(4)
+                for i, col_name in enumerate(feature_columns[:n_features]):
+                    with cols[i % 4]:
+                        if pd.api.types.is_numeric_dtype(sample_df[col_name]):
                             value = st.number_input(
-                                f"Feature {i+1}", value=0.0, step=0.1, format="%.4f", key=f"feature_{i}"
+                                col_name, value=0.0, step=0.1, format="%.4f", key=f"input_{col_name}"
                             )
-                            inputs.append(value)
-
-                submitted = st.form_submit_button("Predict")
-
-                if submitted:
-                    try:
-                        if ui_mode == "sample_df":
-                            row_dict = {name: value for name, value in inputs}
-                            X = pd.DataFrame([row_dict])
                         else:
-                            X = np.array(inputs, dtype=float).reshape(1, -1)
+                            value = st.text_input(col_name, value="", key=f"input_{col_name}")
+                        inputs.append((col_name, value))
+            else:
+                ui_mode = "count"
+                st.markdown("**Input features (generic)**")
+                cols = st.columns(4)
+                for i in range(n_features):
+                    with cols[i % 4]:
+                        value = st.number_input(
+                            f"Feature {i+1}", value=0.0, step=0.1, format="%.4f", key=f"feature_{i}"
+                        )
+                        inputs.append(value)
 
-                        y_pred = model.predict(X)
-                        st.success(f"Output: {y_pred[0]}")
+            submitted = st.form_submit_button("Predict")
 
-                        if show_prob and hasattr(model, "predict_proba"):
-                            try:
-                                proba = model.predict_proba(X)[0]
-                                prob_df = pd.DataFrame({"Class": list(range(len(proba))), "Probability": proba})
-                                st.markdown("**Class probabilities:**")
-                                st.dataframe(prob_df, use_container_width=True)
-                                st.bar_chart(prob_df.set_index("Class"))
-                            except Exception:
-                                pass
-                    except Exception as e:
-                        st.error(f"An error occurred during prediction: {e}")
+            if submitted:
+                try:
+                    if ui_mode == "sample_df":
+                        row_dict = {name: value for name, value in inputs}
+                        X = pd.DataFrame([row_dict])
+                    else:
+                        X = np.array(inputs, dtype=float).reshape(1, -1)
+
+                    y_pred = model.predict(X)
+                    st.success(f"Output: {y_pred[0]}")
+
+                    if show_prob and hasattr(model, "predict_proba"):
+                        try:
+                            proba = model.predict_proba(X)[0]
+                            # For XGBoost, class labels may be in model.classes_
+                            class_labels = getattr(model, "classes_", list(range(len(proba))))
+                            prob_df = pd.DataFrame({"Class": class_labels, "Probability": proba})
+                            st.markdown("**Class probabilities:**")
+                            st.dataframe(prob_df, use_container_width=True)
+                            st.bar_chart(prob_df.set_index("Class"))
+                        except Exception:
+                            pass
+                except Exception as e:
+                    st.error(f"An error occurred during prediction: {e}")
 
 # ============================
 # Footer / Tips
 # ============================
 st.divider()
 st.markdown("Finished")
-
